@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Databases & runtime data
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite3
+data/profile_locks.json
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+logs/
+*.log
+logs/*.log
+logs/*.txt
+
+# UI frontend (React/Vite)
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+dashboard/.env.local
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/.env.local
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
