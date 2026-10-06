@@ -44,3 +44,10 @@ ui/.env.local
 .DS_Store
 Thumbs.db
 *.swp
+
+# Debug artifacts & screenshots
+*.png
+*.jpg
+*.jpeg
+*.html
+
