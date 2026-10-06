@@ -26,6 +26,7 @@ from .config import (
     CIRCADIAN_TIMEZONE_OFFSET_HOURS,
     WARMUP_ROUTINE_ENABLED,
     WARMUP_INTERVAL_HOURS,
+    WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK,
     MAINTENANCE_INTERVAL_HOURS,
     REQUIRED_PROFILE_REGEX,
     BRAND_FACTORY_ROUTINE_ENABLED,
@@ -289,7 +290,19 @@ def warmup_routine_tick(
         all_profiles = lay_tat_ca_profiles()
         name_map = {p.get("id"): p.get("name") for p in all_profiles if isinstance(p, dict)}
 
+        # Round-robin selection: Group candidates by gpm_profile_id and cap at WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK
+        profile_counts: Dict[str, int] = {}
+        filtered_candidates = []
         for acc in candidates:
+            pid = acc["gpm_profile_id"]
+            cnt = profile_counts.get(pid, 0)
+            if cnt < WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK:
+                filtered_candidates.append(acc)
+                profile_counts[pid] = cnt + 1
+            else:
+                log(f"[SCHEDULER] Account #{acc['id']} deferred to next warmup tick (profile quota {WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK} reached).", "DEBUG")
+
+        for acc in filtered_candidates:
             acc_id = acc["id"]
             prof_id = acc["gpm_profile_id"]
             prof_name = name_map.get(prof_id, "")

@@ -78,12 +78,13 @@ DRIP_FEED_ENABLED = True             # Enable S-Curve capacity scaling
 SCHEDULER_TICK_INTERVAL_MINUTES = 15 # Routine job trigger interval
 WARMUP_ROUTINE_ENABLED = True        # Enable autonomous daily warmup
 WARMUP_INTERVAL_HOURS = 4            # Trigger warmup routine every 4 hours during active day
+WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK = 2 # Max brand accounts per GPM profile per warmup tick (Round-Robin)
 MAINTENANCE_INTERVAL_HOURS = 2       # Trigger lock & zombie cleanups every 2 hours
 API_HOST = "127.0.0.1"               # FastAPI REST host
 API_PORT = 8000                      # FastAPI REST port
 
 # ── Brand Account Factory Guardrails ─────────────────────────────
 BRAND_FACTORY_ROUTINE_ENABLED = True
-MAX_BRAND_ACCOUNTS_PER_PROFILE = 4          # Max brand accounts allowed per GPM profile
+MAX_BRAND_ACCOUNTS_PER_PROFILE = 10         # Max brand accounts allowed per GPM profile (1 root + 9-10 brand channels)
 MAX_BRAND_ACCOUNTS_PER_DAY_PER_PROFILE = 1  # Safe quota: max 1 new brand account/day/profile
 BRAND_FACTORY_INTERVAL_HOURS = 12           # Factory routine interval in hours

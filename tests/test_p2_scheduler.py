@@ -249,6 +249,32 @@ def test_warmup_routine_tick_dry_run(mock_dbs):
     assert res["details"][0]["status"] == "dry_run_success"
 
 
+def test_warmup_routine_round_robin_per_profile_cap(mock_dbs):
+    """Verify autonomous warmup routine applies round-robin cap per profile (max 2 per tick)."""
+    from buff_sub.scheduler import warmup_routine_tick
+    from buff_sub.config import WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    s_cur.execute("UPDATE gpm_profiles SET name = 'sub_yt-1' WHERE id = 'gpm-1';")
+    # Seed 5 candidate brand accounts for gpm-1
+    for i in range(5):
+        s_cur.execute("""
+            INSERT INTO sub_accounts (gpm_profile_id, account_type, switch_name, niche, warmup_status, warmup_videos, is_active)
+            VALUES ('gpm-1', 'brand_account', ?, 'tech', 'warming', ?, 1);
+        """, (f"Warm Brand {i}", i))
+    s_conn.commit()
+    s_conn.close()
+
+    res = warmup_routine_tick(dry_run=True, shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    # Should only process WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK (2) instead of all 5
+    assert res["accounts_processed"] == WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK
+    assert res["successful"] == WARMUP_MAX_ACCOUNTS_PER_PROFILE_PER_TICK
+
+
 def test_maintenance_routine_tick_cleans_expired_locks(mock_dbs):
     """Verify maintenance tick cleans up expired locks in account_locks table."""
     from buff_sub.scheduler import maintenance_routine_tick
