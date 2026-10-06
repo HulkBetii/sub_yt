@@ -44,6 +44,24 @@ export interface SchedulerStatus {
       successful?: number;
     }>;
   };
+  last_warmup_time?: string | null;
+  last_factory_time?: string | null;
+  last_factory_summary?: {
+    status?: string;
+    timestamp?: string;
+    dry_run?: boolean;
+    profiles_checked?: number;
+    accounts_created?: number;
+    details?: Array<{
+      profile_id?: string;
+      profile_name?: string;
+      action?: string;
+      reason?: string;
+      channel_name?: string;
+      niche?: string;
+      status?: string;
+    }>;
+  };
 }
 
 export interface SystemStats {

@@ -99,6 +99,16 @@ export const api = {
     return handleResponse(res);
   },
 
+  async triggerWarmupTick(dryRun = false, durationMinutes = 5): Promise<any> {
+    const res = await fetch(`${API_BASE}/scheduler/warmup-tick?dry_run=${dryRun}&duration_minutes=${durationMinutes}`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
+  async triggerFactoryTick(dryRun = false): Promise<any> {
+    const res = await fetch(`${API_BASE}/scheduler/factory-tick?dry_run=${dryRun}`, { method: 'POST' });
+    return handleResponse(res);
+  },
+
   // ── System & Accounts ──
   async getStats(): Promise<SystemStats> {
     const res = await fetch(`${API_BASE}/stats`);

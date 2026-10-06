@@ -82,4 +82,8 @@ MAINTENANCE_INTERVAL_HOURS = 2       # Trigger lock & zombie cleanups every 2 ho
 API_HOST = "127.0.0.1"               # FastAPI REST host
 API_PORT = 8000                      # FastAPI REST port
 
-
+# ── Brand Account Factory Guardrails ─────────────────────────────
+BRAND_FACTORY_ROUTINE_ENABLED = True
+MAX_BRAND_ACCOUNTS_PER_PROFILE = 4          # Max brand accounts allowed per GPM profile
+MAX_BRAND_ACCOUNTS_PER_DAY_PER_PROFILE = 1  # Safe quota: max 1 new brand account/day/profile
+BRAND_FACTORY_INTERVAL_HOURS = 12           # Factory routine interval in hours

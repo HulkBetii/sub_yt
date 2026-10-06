@@ -64,7 +64,8 @@ def mock_dbs(tmp_path):
         cooldown_until TEXT,
         subs_this_month INTEGER DEFAULT 0,
         last_sub_at TEXT,
-        is_active INTEGER DEFAULT 1
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now'))
     );
     """)
     s_cur.execute("""
@@ -267,4 +268,95 @@ def test_maintenance_routine_tick_cleans_expired_locks(mock_dbs):
     res = maintenance_routine_tick(shared_db_path=shared_db)
     assert res["status"] == "completed"
     assert res["cleared_locks"] == 1
+
+
+def test_brand_account_factory_tick_dry_run(mock_dbs):
+    """Verify factory routine detects eligible sub_yt-x profiles and simulates brand account creation."""
+    from buff_sub.scheduler import brand_account_factory_tick
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    # Configure profile matching ^sub_yt-\d+$
+    s_cur.execute("UPDATE gpm_profiles SET name = 'sub_yt-1' WHERE id = 'gpm-1';")
+    s_cur.execute("UPDATE gpm_profiles SET name = 'unrelated_profile' WHERE id = 'gpm-2';")
+    s_conn.commit()
+    s_conn.close()
+
+    res = brand_account_factory_tick(dry_run=True, shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    assert res["profiles_checked"] == 1
+    assert res["accounts_created"] == 1
+    assert res["details"][0]["profile_name"] == "sub_yt-1"
+    assert res["details"][0]["status"] == "dry_run_success"
+
+
+def test_brand_account_factory_tick_skips_when_max_reached(mock_dbs):
+    """Verify factory routine skips profiles that have already reached MAX_BRAND_ACCOUNTS_PER_PROFILE."""
+    from buff_sub.scheduler import brand_account_factory_tick
+    from buff_sub.config import MAX_BRAND_ACCOUNTS_PER_PROFILE
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    s_cur.execute("UPDATE gpm_profiles SET name = 'sub_yt-1' WHERE id = 'gpm-1';")
+    # Seed MAX_BRAND_ACCOUNTS_PER_PROFILE brand accounts created in past days
+    for i in range(MAX_BRAND_ACCOUNTS_PER_PROFILE):
+        s_cur.execute("""
+            INSERT INTO sub_accounts (gpm_profile_id, account_type, switch_name, is_active, created_at)
+            VALUES ('gpm-1', 'brand_account', ?, 1, datetime('now', '-5 days'));
+        """, (f"Brand {i}",))
+    s_conn.commit()
+    s_conn.close()
+
+    res = brand_account_factory_tick(dry_run=True, shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    assert res["accounts_created"] == 0
+    assert res["details"][0]["action"] == "skip"
+    assert "Max brand accounts reached" in res["details"][0]["reason"]
+
+
+def test_brand_account_factory_tick_skips_when_daily_quota_reached(mock_dbs):
+    """Verify factory routine skips profiles that have already created a brand account today."""
+    from buff_sub.scheduler import brand_account_factory_tick
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    s_cur.execute("UPDATE gpm_profiles SET name = 'sub_yt-1' WHERE id = 'gpm-1';")
+    # Seed 1 brand account created within last 24h
+    s_cur.execute("""
+        INSERT INTO sub_accounts (gpm_profile_id, account_type, switch_name, is_active, created_at)
+        VALUES ('gpm-1', 'brand_account', 'Today Brand', 1, datetime('now', '-2 hours'));
+    """)
+    s_conn.commit()
+    s_conn.close()
+
+    res = brand_account_factory_tick(dry_run=True, shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    assert res["accounts_created"] == 0
+    assert res["details"][0]["action"] == "skip"
+    assert "Daily creation cap reached" in res["details"][0]["reason"]
+
+
+def test_brand_account_factory_tick_skips_non_matching_profiles(mock_dbs):
+    r"""Verify factory routine skips all profiles not matching ^sub_yt-\d+$."""
+    from buff_sub.scheduler import brand_account_factory_tick
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    s_cur.execute("UPDATE gpm_profiles SET name = 'random_channel_1' WHERE id = 'gpm-1';")
+    s_cur.execute("UPDATE gpm_profiles SET name = 'another_profile' WHERE id = 'gpm-2';")
+    s_conn.commit()
+    s_conn.close()
+
+    res = brand_account_factory_tick(dry_run=True, shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    assert res["profiles_checked"] == 0
+    assert res["accounts_created"] == 0
 

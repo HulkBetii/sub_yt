@@ -28,6 +28,10 @@ from .config import (
     WARMUP_INTERVAL_HOURS,
     MAINTENANCE_INTERVAL_HOURS,
     REQUIRED_PROFILE_REGEX,
+    BRAND_FACTORY_ROUTINE_ENABLED,
+    MAX_BRAND_ACCOUNTS_PER_PROFILE,
+    MAX_BRAND_ACCOUNTS_PER_DAY_PER_PROFILE,
+    BRAND_FACTORY_INTERVAL_HOURS,
 )
 from .database import (
     list_orders,
@@ -43,6 +47,7 @@ _scheduler: Optional[BackgroundScheduler] = None
 _tick_lock = threading.Lock()
 _warmup_tick_lock = threading.Lock()
 _maintenance_tick_lock = threading.Lock()
+_factory_tick_lock = threading.Lock()
 _is_paused = False
 _last_tick_time: Optional[datetime.datetime] = None
 _last_tick_summary: Dict[str, Any] = {
@@ -59,6 +64,14 @@ _last_warmup_summary: Dict[str, Any] = {
     "timestamp": None,
     "accounts_processed": 0,
     "successful": 0,
+    "details": [],
+}
+_last_factory_time: Optional[datetime.datetime] = None
+_last_factory_summary: Dict[str, Any] = {
+    "status": "idle",
+    "timestamp": None,
+    "profiles_checked": 0,
+    "accounts_created": 0,
     "details": [],
 }
 
@@ -396,6 +409,258 @@ def maintenance_routine_tick(shared_db_path: str = SHARED_DB_PATH) -> Dict[str, 
     return {"status": "completed", "cleared_locks": cleared_locks}
 
 
+# ── Autonomous Brand Account Factory Routine ─────────────────────
+
+def brand_account_factory_tick(
+    dry_run: bool = False,
+    shared_db_path: str = SHARED_DB_PATH,
+) -> Dict[str, Any]:
+    """
+    Autonomous routine tick to create new Brand Accounts for eligible sub_yt-x profiles.
+    Enforces daily quota (max 1/day/profile) and profile ceiling (max 4/profile)
+    to prevent Google SMS checkpoint triggers.
+    """
+    global _last_factory_time, _last_factory_summary
+
+    if not BRAND_FACTORY_ROUTINE_ENABLED:
+        log("[SCHEDULER] Brand factory tick skipped: BRAND_FACTORY_ROUTINE_ENABLED is False.", "INFO")
+        return {"status": "disabled", "reason": "Brand factory routine disabled"}
+
+    if _is_paused:
+        log("[SCHEDULER] Brand factory tick skipped: Scheduler is paused.", "INFO")
+        return {"status": "paused", "reason": "Scheduler is paused"}
+
+    if not _factory_tick_lock.acquire(blocking=False):
+        log("[SCHEDULER] Brand factory tick skipped: Another factory tick is currently running.", "WARN")
+        return {"status": "busy", "reason": "Previous factory tick still running"}
+
+    if is_circadian_sleep_time() and not dry_run:
+        _factory_tick_lock.release()
+        now_local = datetime.datetime.utcnow() + datetime.timedelta(hours=CIRCADIAN_TIMEZONE_OFFSET_HOURS)
+        log(f"[SCHEDULER] Brand factory tick skipped: Circadian Sleep Guard active (Local time: {now_local.strftime('%H:%M:%S')}).", "INFO")
+        return {"status": "sleep_hours", "reason": "Circadian sleep period active (00:00 - 06:30)"}
+
+    now_utc = datetime.datetime.utcnow()
+    _last_factory_time = now_utc
+    log("═════════════════════════════════════════════════════════════════", "INFO")
+    log(f"[SCHEDULER] Brand Account Factory Routine Tick started at {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')} (Dry-run: {dry_run})", "INFO")
+    log("═════════════════════════════════════════════════════════════════", "INFO")
+
+    factory_result = {
+        "status": "completed",
+        "timestamp": now_utc.strftime("%Y-%m-%d %H:%M:%S"),
+        "dry_run": dry_run,
+        "profiles_checked": 0,
+        "accounts_created": 0,
+        "details": [],
+    }
+
+    try:
+        # 1. Fetch eligible profiles matching REQUIRED_PROFILE_REGEX (^sub_yt-\d+$)
+        conn = sqlite3.connect(shared_db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT id, name FROM gpm_profiles WHERE status = 'active' OR status IS NULL;")
+            profiles_db = [dict(r) for r in cur.fetchall()]
+        except sqlite3.OperationalError:
+            cur.execute("SELECT id, notes, gmail FROM gpm_profiles WHERE is_active = 1;")
+            raw_profiles = [dict(r) for r in cur.fetchall()]
+            profiles_db = []
+            for r in raw_profiles:
+                p_name = ""
+                notes = r.get("notes") or ""
+                if "Discovered:" in notes:
+                    p_name = notes.split("Discovered:")[-1].strip()
+                elif r.get("gmail"):
+                    p_name = r["gmail"].split("@")[0]
+                profiles_db.append({"id": r["id"], "name": p_name})
+        conn.close()
+
+        name_map = {p["id"]: p.get("name", "") for p in profiles_db}
+        if r"D:\VibeCoding\nuoi-kenh-youtube" not in sys.path:
+            sys.path.append(r"D:\VibeCoding\nuoi-kenh-youtube")
+        try:
+            from nuoi_kenh.gpm_api import lay_tat_ca_profiles
+            api_profs = lay_tat_ca_profiles()
+            api_map = {ap.get("id"): ap.get("name", "") for ap in api_profs if isinstance(ap, dict) and ap.get("id")}
+            for pid in name_map:
+                if not name_map[pid] and pid in api_map:
+                    name_map[pid] = api_map[pid]
+            if not profiles_db:
+                for ap in api_profs:
+                    if isinstance(ap, dict) and ap.get("id"):
+                        name_map[ap["id"]] = ap.get("name", "")
+                        profiles_db.append({"id": ap["id"], "name": ap.get("name", "")})
+        except Exception as e:
+            log(f"[SCHEDULER] GPM API lay_tat_ca_profiles fallback: {e}", "DEBUG")
+
+        eligible_profiles = []
+        for prof in profiles_db:
+            prof_id = prof["id"]
+            prof_name = name_map.get(prof_id) or prof.get("name", "")
+            if prof_name and re.match(REQUIRED_PROFILE_REGEX, prof_name):
+                eligible_profiles.append({"id": prof_id, "name": prof_name})
+
+        factory_result["profiles_checked"] = len(eligible_profiles)
+        if not eligible_profiles:
+            log(f"[SCHEDULER] No profiles found matching pattern '{REQUIRED_PROFILE_REGEX}'. Factory tick complete.", "INFO")
+            _last_factory_summary = factory_result
+            return factory_result
+
+        # Import factory dependencies
+        from nuoi_kenh.brand_account_manager import (
+            generate_channel_name,
+            create_brand_account,
+            NICHE_TEMPLATES,
+        )
+        from nuoi_kenh.gpm_api import mo_profile_gpm, dong_profile_gpm
+        import random
+
+        all_niches = list(NICHE_TEMPLATES.keys())
+
+        for prof in eligible_profiles:
+            prof_id = prof["id"]
+            prof_name = prof["name"]
+
+            conn = sqlite3.connect(shared_db_path)
+            cur = conn.cursor()
+
+            # Profile ceiling check
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM sub_accounts
+                WHERE gpm_profile_id = ? AND account_type = 'brand_account' AND is_active = 1;
+                """,
+                (prof_id,)
+            )
+            brand_count = cur.fetchone()[0]
+
+            if brand_count >= MAX_BRAND_ACCOUNTS_PER_PROFILE:
+                log(f"[SCHEDULER] Profile '{prof_name}' reached max brand accounts ({brand_count}/{MAX_BRAND_ACCOUNTS_PER_PROFILE}). Skipping.", "INFO")
+                factory_result["details"].append({
+                    "profile_id": prof_id,
+                    "profile_name": prof_name,
+                    "action": "skip",
+                    "reason": f"Max brand accounts reached ({brand_count}/{MAX_BRAND_ACCOUNTS_PER_PROFILE})",
+                })
+                conn.close()
+                continue
+
+            # Daily limit check: max 1/day/profile
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM sub_accounts
+                WHERE gpm_profile_id = ? AND account_type = 'brand_account'
+                  AND created_at >= datetime('now', '-24 hours');
+                """,
+                (prof_id,)
+            )
+            created_last_24h = cur.fetchone()[0]
+
+            if created_last_24h >= MAX_BRAND_ACCOUNTS_PER_DAY_PER_PROFILE:
+                log(f"[SCHEDULER] Profile '{prof_name}' already created {created_last_24h} brand account(s) in last 24h. Skipping.", "INFO")
+                factory_result["details"].append({
+                    "profile_id": prof_id,
+                    "profile_name": prof_name,
+                    "action": "skip",
+                    "reason": f"Daily creation cap reached ({created_last_24h}/{MAX_BRAND_ACCOUNTS_PER_DAY_PER_PROFILE})",
+                })
+                conn.close()
+                continue
+
+            # Pick niche: prioritize unused niches on this profile
+            cur.execute(
+                """
+                SELECT DISTINCT niche FROM sub_accounts
+                WHERE gpm_profile_id = ? AND is_active = 1;
+                """,
+                (prof_id,)
+            )
+            used_niches = {row[0] for row in cur.fetchall() if row[0]}
+            conn.close()
+
+            available_niches = [n for n in all_niches if n not in used_niches]
+            selected_niche = random.choice(available_niches) if available_niches else random.choice(all_niches)
+            new_channel_name = generate_channel_name(niche=selected_niche)
+
+            log(f"[SCHEDULER] Creating Brand Account '{new_channel_name}' (niche: {selected_niche}) for profile '{prof_name}'...", "INFO")
+
+            if dry_run:
+                factory_result["accounts_created"] += 1
+                factory_result["details"].append({
+                    "profile_id": prof_id,
+                    "profile_name": prof_name,
+                    "channel_name": new_channel_name,
+                    "niche": selected_niche,
+                    "status": "dry_run_success",
+                })
+                continue
+
+            # Open GPM Profile
+            driver = mo_profile_gpm(prof_id)
+            if not driver:
+                log(f"[SCHEDULER] Could not open profile '{prof_name}' for brand creation.", "ERROR")
+                factory_result["details"].append({
+                    "profile_id": prof_id,
+                    "profile_name": prof_name,
+                    "status": "failed_open_browser",
+                })
+                continue
+
+            try:
+                res = create_brand_account(
+                    driver=driver,
+                    profile_id=prof_id,
+                    channel_name=new_channel_name,
+                    niche=selected_niche,
+                    db_path=shared_db_path,
+                )
+                if res.get("status") == "SUCCESS":
+                    factory_result["accounts_created"] += 1
+                    factory_result["details"].append({
+                        "profile_id": prof_id,
+                        "profile_name": prof_name,
+                        "account_id": res.get("account_id"),
+                        "channel_name": res.get("channel_name"),
+                        "channel_id": res.get("channel_id"),
+                        "niche": selected_niche,
+                        "status": "success",
+                    })
+                    log(f"[SCHEDULER] Successfully created Brand Account '{res.get('channel_name')}' on '{prof_name}'.", "SUCCESS")
+                else:
+                    factory_result["details"].append({
+                        "profile_id": prof_id,
+                        "profile_name": prof_name,
+                        "channel_name": new_channel_name,
+                        "status": res.get("status", "failed"),
+                        "error": res.get("error"),
+                    })
+                    log(f"[SCHEDULER] Brand creation returned status: {res.get('status')}, error: {res.get('error')}", "WARN")
+            except Exception as e:
+                log(f"[SCHEDULER] Exception during brand account creation for '{prof_name}': {e}", "ERROR")
+                factory_result["details"].append({
+                    "profile_id": prof_id,
+                    "profile_name": prof_name,
+                    "channel_name": new_channel_name,
+                    "status": "exception",
+                    "error": str(e),
+                })
+            finally:
+                dong_profile_gpm(prof_id)
+
+    except Exception as e:
+        log(f"[SCHEDULER] Error during brand factory routine tick: {e}", "ERROR")
+        factory_result["status"] = "error"
+        factory_result["error"] = str(e)
+    finally:
+        _factory_tick_lock.release()
+        _last_factory_summary = factory_result
+        log(f"[SCHEDULER] Brand Account Factory Tick complete: {factory_result['accounts_created']} created across {factory_result['profiles_checked']} profiles.", "SUCCESS")
+
+    return factory_result
+
+
 # ── Scheduler Lifecycle Controls ─────────────────────────────────
 
 def get_scheduler() -> BackgroundScheduler:
@@ -466,9 +731,21 @@ def start_scheduler(
         kwargs={"shared_db_path": shared_db_path},
     )
 
+    # 4. Register Brand Account Factory Routine
+    if BRAND_FACTORY_ROUTINE_ENABLED:
+        trigger_factory = IntervalTrigger(hours=BRAND_FACTORY_INTERVAL_HOURS)
+        sched.add_job(
+            brand_account_factory_tick,
+            trigger=trigger_factory,
+            id="brand_account_factory_tick",
+            name="Autonomous Brand Account Factory Routine Tick",
+            replace_existing=True,
+            kwargs={"dry_run": dry_run, "shared_db_path": shared_db_path},
+        )
+
     sched.start()
     _is_paused = False
-    log(f"[SCHEDULER] Background scheduler started successfully (Drip: every {interval_min}m, Warmup: every {WARMUP_INTERVAL_HOURS}h, Maint: every {MAINTENANCE_INTERVAL_HOURS}h).", "SUCCESS")
+    log(f"[SCHEDULER] Background scheduler started successfully (Drip: every {interval_min}m, Warmup: every {WARMUP_INTERVAL_HOURS}h, Maint: every {MAINTENANCE_INTERVAL_HOURS}h, Factory: every {BRAND_FACTORY_INTERVAL_HOURS}h).", "SUCCESS")
     return True
 
 
@@ -534,6 +811,15 @@ def trigger_maintenance_tick_now(shared_db_path: str = SHARED_DB_PATH) -> Dict[s
     return maintenance_routine_tick(shared_db_path=shared_db_path)
 
 
+def trigger_factory_tick_now(
+    dry_run: bool = False,
+    shared_db_path: str = SHARED_DB_PATH,
+) -> Dict[str, Any]:
+    """Manually invoke a brand account factory routine tick immediately outside the schedule."""
+    log("[SCHEDULER] Manual brand factory tick triggered on-demand.", "INFO")
+    return brand_account_factory_tick(dry_run=dry_run, shared_db_path=shared_db_path)
+
+
 def get_scheduler_status() -> Dict[str, Any]:
     """Retrieve runtime state and metrics of the scheduler across all registered jobs."""
     sched = get_scheduler()
@@ -561,5 +847,7 @@ def get_scheduler_status() -> Dict[str, Any]:
         "last_tick_summary": _last_tick_summary,
         "last_warmup_time": _last_warmup_time.strftime("%Y-%m-%d %H:%M:%S UTC") if _last_warmup_time else None,
         "last_warmup_summary": _last_warmup_summary,
+        "last_factory_time": _last_factory_time.strftime("%Y-%m-%d %H:%M:%S UTC") if _last_factory_time else None,
+        "last_factory_summary": _last_factory_summary,
     }
 

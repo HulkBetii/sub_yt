@@ -100,13 +100,35 @@ export const App: React.FC = () => {
   };
 
   const handleTriggerTick = async (dryRun: boolean) => {
-    showToast(`Triggering routine tick (Dry-run: ${dryRun})...`);
+    showToast(`Triggering sub routine tick (Dry-run: ${dryRun})...`);
     try {
       const res = await api.triggerTick(dryRun);
       showToast(`Routine tick completed! (${res.successful}/${res.sessions_attempted} successful)`);
       await fetchAllData();
     } catch (err: any) {
       showToast(`Tick error: ${err.message}`);
+    }
+  };
+
+  const handleTriggerWarmup = async (dryRun: boolean) => {
+    showToast(`Triggering warmup nurturing tick (Dry-run: ${dryRun})...`);
+    try {
+      const res = await api.triggerWarmupTick(dryRun);
+      showToast(`Warmup tick completed! (${res.successful}/${res.accounts_processed} accounts warmed)`);
+      await fetchAllData();
+    } catch (err: any) {
+      showToast(`Warmup error: ${err.message}`);
+    }
+  };
+
+  const handleTriggerFactory = async (dryRun: boolean) => {
+    showToast(`Triggering brand factory routine (Dry-run: ${dryRun})...`);
+    try {
+      const res = await api.triggerFactoryTick(dryRun);
+      showToast(`Brand factory tick completed! (${res.accounts_created} created across ${res.profiles_checked} profiles)`);
+      await fetchAllData();
+    } catch (err: any) {
+      showToast(`Factory error: ${err.message}`);
     }
   };
 
@@ -123,6 +145,8 @@ export const App: React.FC = () => {
           onPause={handlePauseScheduler}
           onResume={handleResumeScheduler}
           onTriggerTick={handleTriggerTick}
+          onTriggerWarmup={handleTriggerWarmup}
+          onTriggerFactory={handleTriggerFactory}
           isLoading={isLoading}
         />
 

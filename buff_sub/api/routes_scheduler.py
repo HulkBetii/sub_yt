@@ -13,11 +13,13 @@ from ..scheduler import (
     trigger_tick_now,
     trigger_warmup_tick_now,
     trigger_maintenance_tick_now,
+    trigger_factory_tick_now,
 )
 from .schemas import (
     SchedulerStatusResponse,
     TickTriggerResponse,
     WarmupTriggerResponse,
+    FactoryTriggerResponse,
 )
 
 router = APIRouter(prefix="/api/scheduler", tags=["Scheduler"])
@@ -97,4 +99,20 @@ def api_trigger_warmup_tick(
 def api_trigger_maintenance_tick():
     """Manually invoke periodic maintenance (clean expired locks and stale state)."""
     return trigger_maintenance_tick_now()
+
+
+@router.post("/factory-tick", response_model=FactoryTriggerResponse)
+def api_trigger_factory_tick(
+    dry_run: bool = Query(default=False, description="Simulate brand account creation without browser"),
+):
+    """Manually invoke an autonomous brand account factory routine tick immediately."""
+    result = trigger_factory_tick_now(dry_run=dry_run)
+    return FactoryTriggerResponse(
+        status=result.get("status", "completed"),
+        timestamp=result.get("timestamp", ""),
+        dry_run=result.get("dry_run", dry_run),
+        profiles_checked=result.get("profiles_checked", 0),
+        accounts_created=result.get("accounts_created", 0),
+        details=result.get("details", []),
+    )
 

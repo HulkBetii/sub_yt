@@ -52,6 +52,8 @@ class SchedulerStatusResponse(BaseModel):
     last_tick_summary: Dict[str, Any] = {}
     last_warmup_time: Optional[str] = None
     last_warmup_summary: Dict[str, Any] = {}
+    last_factory_time: Optional[str] = None
+    last_factory_summary: Dict[str, Any] = {}
 
 
 class TickTriggerResponse(BaseModel):
@@ -70,6 +72,15 @@ class WarmupTriggerResponse(BaseModel):
     dry_run: bool
     accounts_processed: int
     successful: int
+    details: List[Dict[str, Any]] = []
+
+
+class FactoryTriggerResponse(BaseModel):
+    status: str
+    timestamp: str
+    dry_run: bool
+    profiles_checked: int
+    accounts_created: int
     details: List[Dict[str, Any]] = []
 
 
