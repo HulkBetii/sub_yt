@@ -41,11 +41,17 @@ class OrderListResponse(BaseModel):
 class SchedulerStatusResponse(BaseModel):
     is_running: bool
     is_paused: bool
+    is_circadian_sleep: bool = False
+    local_time: Optional[str] = None
     tick_interval_minutes: int
     active_jobs_count: int
+    registered_jobs: List[str] = []
     next_run_time: Optional[str] = None
+    next_runs: Dict[str, str] = {}
     last_tick_time: Optional[str] = None
     last_tick_summary: Dict[str, Any] = {}
+    last_warmup_time: Optional[str] = None
+    last_warmup_summary: Dict[str, Any] = {}
 
 
 class TickTriggerResponse(BaseModel):
@@ -54,6 +60,15 @@ class TickTriggerResponse(BaseModel):
     dry_run: bool
     orders_checked: int
     sessions_attempted: int
+    successful: int
+    details: List[Dict[str, Any]] = []
+
+
+class WarmupTriggerResponse(BaseModel):
+    status: str
+    timestamp: str
+    dry_run: bool
+    accounts_processed: int
     successful: int
     details: List[Dict[str, Any]] = []
 

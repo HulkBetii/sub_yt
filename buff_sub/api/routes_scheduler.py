@@ -11,10 +11,13 @@ from ..scheduler import (
     resume_scheduler,
     get_scheduler_status,
     trigger_tick_now,
+    trigger_warmup_tick_now,
+    trigger_maintenance_tick_now,
 )
 from .schemas import (
     SchedulerStatusResponse,
     TickTriggerResponse,
+    WarmupTriggerResponse,
 )
 
 router = APIRouter(prefix="/api/scheduler", tags=["Scheduler"])
@@ -71,3 +74,27 @@ def api_trigger_tick(
         successful=result.get("successful", 0),
         details=result.get("details", []),
     )
+
+
+@router.post("/warmup-tick", response_model=WarmupTriggerResponse)
+def api_trigger_warmup_tick(
+    dry_run: bool = Query(default=False, description="Simulate warmup sessions without opening browser"),
+    duration_minutes: int = Query(default=5, ge=1, le=30, description="Warmup duration per account in minutes")
+):
+    """Manually invoke an autonomous warmup routine tick immediately."""
+    result = trigger_warmup_tick_now(dry_run=dry_run, duration_minutes=duration_minutes)
+    return WarmupTriggerResponse(
+        status=result.get("status", "completed"),
+        timestamp=result.get("timestamp", ""),
+        dry_run=result.get("dry_run", dry_run),
+        accounts_processed=result.get("accounts_processed", 0),
+        successful=result.get("successful", 0),
+        details=result.get("details", []),
+    )
+
+
+@router.post("/maintenance-tick")
+def api_trigger_maintenance_tick():
+    """Manually invoke periodic maintenance (clean expired locks and stale state)."""
+    return trigger_maintenance_tick_now()
+

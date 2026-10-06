@@ -54,10 +54,17 @@ def mock_dbs(tmp_path):
         account_type TEXT DEFAULT 'gmail_root',
         channel_id TEXT,
         channel_name TEXT,
+        switch_name TEXT,
+        niche TEXT DEFAULT 'general',
         warmup_status TEXT DEFAULT 'ready',
+        warmup_days INTEGER DEFAULT 0,
+        warmup_videos INTEGER DEFAULT 0,
+        warmup_since TEXT,
+        ready_since TEXT,
         cooldown_until TEXT,
         subs_this_month INTEGER DEFAULT 0,
-        last_sub_at TEXT
+        last_sub_at TEXT,
+        is_active INTEGER DEFAULT 1
     );
     """)
     s_cur.execute("""
@@ -199,3 +206,65 @@ def test_scheduler_lifecycle_and_status(mock_dbs):
     assert stopped is True
     status_s = get_scheduler_status()
     assert status_s["is_running"] is False
+
+
+def test_circadian_sleep_guard_and_tick_skipping(mock_dbs):
+    """Verify circadian rhythm sleep detection and tick suspension during night hours."""
+    from buff_sub.scheduler import is_circadian_sleep_time
+
+    # Test when mock local time is 03:00 (middle of deep sleep)
+    with patch("buff_sub.scheduler.datetime") as mock_dt:
+        mock_now = datetime.datetime(2026, 10, 6, 20, 0, 0)  # UTC 20:00 + 7h = 03:00 local
+        mock_dt.datetime.utcnow.return_value = mock_now
+        mock_dt.timedelta = datetime.timedelta
+
+        assert is_circadian_sleep_time() is True
+
+        res = drip_feed_tick(dry_run=False, local_db_path=mock_dbs["local"], shared_db_path=mock_dbs["shared"])
+        assert res["status"] == "sleep_hours"
+
+
+def test_warmup_routine_tick_dry_run(mock_dbs):
+    """Verify autonomous warmup routine tick discovers and processes candidate brand accounts."""
+    from buff_sub.scheduler import warmup_routine_tick
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    # Add candidate brand accounts
+    s_cur.execute("UPDATE gpm_profiles SET name = 'sub_yt-1' WHERE id = 'gpm-1';")
+    s_cur.execute("""
+        INSERT INTO sub_accounts (gpm_profile_id, account_type, switch_name, niche, warmup_status, warmup_videos, is_active)
+        VALUES ('gpm-1', 'brand_account', 'Test Brand 1', 'gaming', 'cold', 0, 1);
+    """)
+    s_conn.commit()
+    s_conn.close()
+
+    res = warmup_routine_tick(dry_run=True, shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    assert res["accounts_processed"] >= 1
+    assert res["successful"] >= 1
+    assert res["details"][0]["status"] == "dry_run_success"
+
+
+def test_maintenance_routine_tick_cleans_expired_locks(mock_dbs):
+    """Verify maintenance tick cleans up expired locks in account_locks table."""
+    from buff_sub.scheduler import maintenance_routine_tick
+
+    shared_db = mock_dbs["shared"]
+    s_conn = sqlite3.connect(shared_db)
+    s_cur = s_conn.cursor()
+
+    # Add expired lock
+    s_cur.execute("""
+        INSERT INTO account_locks (account_id, locked_by, locked_at, expires_at)
+        VALUES (1, 'old_proc', datetime('now', '-10 minutes'), datetime('now', '-5 minutes'));
+    """)
+    s_conn.commit()
+    s_conn.close()
+
+    res = maintenance_routine_tick(shared_db_path=shared_db)
+    assert res["status"] == "completed"
+    assert res["cleared_locks"] == 1
+

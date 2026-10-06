@@ -68,9 +68,18 @@ LIKE_PROBABILITY = 0.60         # 60% probability to like video before subscribi
 COOLDOWN_POST_SUB_MIN = 25      # Watch random video afterwards before closing
 COOLDOWN_POST_SUB_MAX = 60
 
+# ── Circadian Rhythm Guardrails (Local Time UTC+7) ───────────────
+CIRCADIAN_SLEEP_START_HOUR = 0       # 00:00 midnight
+CIRCADIAN_SLEEP_END_HOUR = 6         # 06:30 morning threshold
+CIRCADIAN_TIMEZONE_OFFSET_HOURS = 7  # Vietnam Time (UTC+7)
+
 # ── Drip-Feed & Autonomous Scheduler ─────────────────────────────
 DRIP_FEED_ENABLED = True             # Enable S-Curve capacity scaling
 SCHEDULER_TICK_INTERVAL_MINUTES = 15 # Routine job trigger interval
+WARMUP_ROUTINE_ENABLED = True        # Enable autonomous daily warmup
+WARMUP_INTERVAL_HOURS = 4            # Trigger warmup routine every 4 hours during active day
+MAINTENANCE_INTERVAL_HOURS = 2       # Trigger lock & zombie cleanups every 2 hours
 API_HOST = "127.0.0.1"               # FastAPI REST host
 API_PORT = 8000                      # FastAPI REST port
+
 
