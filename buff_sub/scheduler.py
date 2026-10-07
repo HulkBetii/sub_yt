@@ -6,6 +6,7 @@ hourly velocity guardrails, and master account diversity.
 """
 import threading
 import datetime
+import time
 from typing import Optional, Dict, Any, List
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -384,6 +385,7 @@ def warmup_routine_tick(
                 })
             finally:
                 dong_profile_gpm(prof_id)
+                time.sleep(5)
 
     except Exception as e:
         log(f"[SCHEDULER] Error during warmup routine tick: {e}", "ERROR")
@@ -661,6 +663,7 @@ def brand_account_factory_tick(
                 })
             finally:
                 dong_profile_gpm(prof_id)
+                time.sleep(5)
 
     except Exception as e:
         log(f"[SCHEDULER] Error during brand factory routine tick: {e}", "ERROR")
